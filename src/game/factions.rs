@@ -1,234 +1,121 @@
-//! `faction` defines factions within the game.
+//! `factions` defines the `Faction` type, its creation, modification and related types.
 //!
 //! #Last Modified
 //!
 //! Author: Daniel Bechaz</br>
-//! Date: 2017/10/5
+//! Date: 2017/11/07
 
+use game::*;
 use std::collections::HashMap;
+use std::sync::{Once, ONCE_INIT};
+use std::hash::{Hash, Hasher};
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
-/// `Faction` is a named faction in the game.
-pub struct Faction {
-    /// The name of the `Faction`.
-    name: String
-}
+pub type Faction = UInt;
 
-impl Faction {
-    /// Builds a new `Faction` based on the passed string with some standardised
-    /// formatting:
-    ///     * First letter is capitalised.
-    ///     * First letter follow a space is capitalised.
-    ///
-    /// #Params
-    ///
-    /// name_root --- The string to base the faction name on.
-    pub fn new(name_root: &str) -> Result<Faction, FactionError> {
-        let mut name = String::with_capacity(name_root.trim().len());
-        if name_root.is_empty() {
-            return Err(FactionError)
-        }
-        
-        {
-            let mut char_iter = name_root.chars();
-            name.push(
-                char_iter
-                    .next()
-                    .unwrap()
-                    .to_uppercase()
-                        .next()
-                        .unwrap()
-            );
-            
-            loop {
-                match char_iter.next() {
-                    None => break,
-                    Some(c) => {
-                        if c == ' ' {
-                            while {
-                                let upper_char = char_iter
-                                    .next()
-                                    .unwrap()
-                                    .to_uppercase()
-                                        .next()
-                                        .unwrap();
-                                if upper_char != ' ' {
-                                    name.push(upper_char);
-                                    false
-                                } else {
-                                    true
-                                }
-                            } {};
-                        }
-                    }
-                }
-            }
-        }
-        
-        Ok(
-            Faction {
-                name
-            }
-        )
-    }
-}
-
-impl Into<String> for Faction {
-    fn into(self) -> String {
-        self.name
-    }
-}
-
-impl AsRef<String> for Faction {
-    fn as_ref(&self) -> &String {
-        &self.name
-    }
-}
-
-#[derive(Debug)]
-/// An error raised when passing the string to build a `Faction`.
-pub struct FactionError;
-
-#[derive(Eq, Clone)]
-/// A collection of relations from one `Faction` to many others.
-pub struct FactionRelationships {
-    /// The `Faction` which is relating to all the others.
-    pub core: Faction,
-    /// The way the core `Faction` relates to other `Faction`s.
-    relationships: RelationMap
-}
-
-impl FactionRelationships {
-    /// Creates a `FactionRelationships` around the passed `Faction` which is unaware of
-    /// any other `Faction`.
-    ///
-    /// #Params
-    ///
-    /// core --- The `Faction` which these relationships are centred around.
-    pub fn new(core: Faction) -> FactionRelationships {
-        FactionRelationships {
-            core,
-            relationships: RelationMap::new()
-        }
-    }
-    /// Creates a `FactionRelationships` around the passed `Faction` with the passed
-    /// relationships.
-    ///
-    /// #Params
-    ///
-    /// core --- The `Faction` which these relationships are centred around.
-    /// relationships --- The way the `core` `Faction` relates to the other `Faction`s.
-    pub fn from_parts(core: Faction, mut relationships: RelationMap) -> FactionRelationships {
-        relationships.remove(&core);
-        
-        FactionRelationships {
-            core,
-            relationships
-        }
-    }
-    /// Returns the relationship the `core` `Faction` has with the passed `Faction`.
-    ///
-    /// #Params
-    ///
-    /// faction --- The `Faction` to retrieve the `Relation` for.
-    pub fn get_relation(&self, faction: &Faction) -> Relation {
-        use self::Relation::*;
-        
-        if faction == &self.core {
-            OwnFaction
-        } else {
-            match self.relationships.get(faction) {
-                None => Unaware,
-                Some(relation) => relation.clone()
-            }
-        }
-    }
-    /// Attempts to set the relationship of the `core` `Faction` with the passed
-    /// `Faction` and returns the old `Relation`. `None` will be returned if `faction` is
-    /// the `core` `Faction`. If no relation previously existed `Unaware` is returned.
-    ///
-    /// #Params
-    ///
-    /// faction --- The `Faction` to set the `Relation` too.
-    /// relation --- The `Relation` to assign to `faction`.
-    pub fn set_relation(&mut self, faction: Faction, relation: Relation) -> Option<Relation> {
-        use self::Relation::*;
-        
-        if faction == self.core {
-            None
-        } else if relation == Unaware {
-            match self.relationships.remove(&faction) {
-                None => Some(Unaware),
-                relation => relation
-            }
-        } else {
-            match self.relationships.insert(faction, relation) {
-                None => Some(Unaware),
-                relation => relation
-            }
-        }
-    }
-    /// Checks if the two `FactionRelationships` values are `consistent` between eachother.
-    /// `consistent` here means that the two factions agree on their `Relation` to
-    /// eachother.
-    ///
-    /// #Params
-    ///
-    /// left --- The first `FactionRelationships` value to check.
-    /// right --- The second `FactionRelationships` value to check.
-    pub fn are_consistent(left: &Self, right: &Self) -> bool {
-        use self::Relation::Unaware;
-        
-        let relation = left.get_relation(&right.core);
-        if relation == Unaware {
-            true
-        } else {
-            let other_relation = right.get_relation(&left.core);
-            if other_relation == Unaware {
-                true
-            } else {
-                relation == other_relation
-            }
-        }
-    }
-}
-
-impl PartialEq for FactionRelationships {
-    fn eq(&self, other: &Self) -> bool {
-        if self.core != other.core {
-            false
-        } else {
-            if self.relationships.len() != other.relationships.len() {
-                false
-            } else {
-                for (faction, relation) in self.relationships.iter() {
-                    match other.relationships.get(faction) {
-                        None => return false,
-                        Some(other_relation) => if relation != other_relation {
-                            return false
-                        }
-                    }
-                }
-                true
-            }
-        }
-    }
-}
-
-impl Into<RelationMap> for FactionRelationships {
-    fn into(self) -> RelationMap {
-        self.relationships
-    }
-}
-
-pub type RelationMap = HashMap<Faction, Relation>;
-
-#[derive(PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+/// `Relation` defines how two `Faction`s feel about each other.
 pub enum Relation {
+    /// The `Faction`s are unaware that the other exists.
     Unaware,
-    OwnFaction,
-    Allied,
-    AtWar
+    /// The `Faction`s are neutral towards each other.
+    Neutral,
+    /// The `Faction`s are friendly with each other.
+    Friendly,
+    /// The `Faction`s are an enemy of the other.
+    Enemy
+}
+pub use self::Relation::*;
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+/// Defines a pair of `Faction` values. When comparing (A, B) == (B, A).
+pub struct FactionPair(Faction, Faction);
+
+impl FactionPair {
+    /// Creates a new `FactionPair` from raw parts without guarentees.
+    ///
+    /// #Params
+    ///
+    /// first --- The first `Faction` value.
+    /// second --- The second `Faction` value.
+    pub unsafe fn from_parts(first: Faction, second: Faction) -> FactionPair {
+        FactionPair(first, second)
+    }
+    /// Creates a new `FactionPair`, checking that it is not relating to itself and that
+    /// the tuple (A, B) ensures A < B.
+    ///
+    /// #Params
+    ///
+    /// Refer to `FactionPair::from_parts` for parameters.
+    pub fn new(first: Faction, second: Faction) -> Option<FactionPair> {
+        if first == second {
+            None
+        } else {
+            Some(unsafe {
+                if first < second {
+                    FactionPair::from_parts(first, second)
+                } else {
+                    FactionPair::from_parts(second, first)
+                }
+            })
+        }
+    }
+    /// Converts the `FactionPair` to a u64.
+    pub fn as_u64(&self) -> u64 {
+        unsafe {
+            *(self as *const FactionPair as *const u64)
+        }
+    }
+}
+
+impl Hash for FactionPair {
+    fn hash<T: Hasher>(&self, state: &mut T) {
+        state.write_u64(self.as_u64())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+/// An item which is alligned with a particular faction.
+pub struct AllignedInstance<T: Sized>(pub Faction, pub T);
+
+impl<T: Sized> AsRef<T> for AllignedInstance<T> {
+    fn as_ref(&self) -> &T {
+        &self.1
+    }
+}
+
+static mut GAME_FACTIONS: *mut (Vec<String>, HashMap<FactionPair, Relation>) = 0 as *mut (Vec<String>, HashMap<FactionPair, Relation>);
+static INIT_GAME_FACTIONS: Once = ONCE_INIT;
+
+#[cfg(features="hardcoded")]
+pub unsafe fn init_game_factions() {
+    INIT_GAME_FACTIONS.call_once(
+        || {
+            let mut factions = (Vec::with_capacity(2), HashMap::with_capacity(2));
+            macro_rules! hardcode_faction {
+                ($name:tt, $relation:ptrn) => {{
+                    factions.0.push($name);
+                    factions.1.insert($name, $relation);
+                }}
+            }
+            
+            hardcode_faction!(
+                "Empire",
+                (FactionPair::new(0, 1), Enemy)
+            );
+            GAME_FACTIONS = Box::into_raw(Box::new(factions))
+        }
+    )
+}
+#[cfg(not(features="hardcoded"))]
+pub unsafe fn init_game_factions() {
+    INIT_GAME_FACTIONS.call_once(
+        || GAME_FACTIONS = Box::into_raw(Box::new((Vec::new(), HashMap::new())))
+    )
+}
+pub fn get_game_factions() -> &'static mut (Vec<String>, HashMap<FactionPair, Relation>) {
+    unsafe {
+        &mut *GAME_FACTIONS
+    }
 }
 
 #[cfg(test)]
@@ -236,64 +123,18 @@ mod tests {
     use super::*;
     
     #[test]
-    fn test_faction_relationships() {
-        use super::Relation::*;
+    fn test_faction_pair() {
+        let pair = FactionPair::new(0, 0);
+        assert!(pair == None, "`FactionPair::new` failed to error on self relation.");
         
-        let core = if let Ok(_) = Faction::new("") {
-            panic!("`test_faction_family` Failed to error on invalid Faction string.")
-        } else {
-            Faction::new("test faction")
-                .expect("`test_faction_family` Failed to create Faction from valid string.")
-        };
-        let faction = Faction::new("second faction")
-            .expect("`test_faction_family` Failed to create Faction from second valid string.");
-        
-        let mut relationships = FactionRelationships::new(core.clone());
-        assert!(relationships.get_relation(&core) == OwnFaction,
-            "`test_faction_family` Failed to recognise own Faction."
-        );
-        
-        match relationships.set_relation(faction.clone(), Unaware) {
-            None => panic!("`test_faction_family` Failed to recognise relation."),
-            Some(x) => if x != Unaware {
-                panic!("`test_faction_family` Failed to return expect relation.")
-            }
+        let pair = FactionPair::new(0, 1);
+        unsafe {
+            assert!(pair == Some(FactionPair::from_parts(0, 1)), "`FactionPair::new` failed to create new `FactionPair`.");
         }
         
-        relationships.set_relation(
-            faction.clone(),
-            Allied
-        ).expect("`test_faction_family` Failed to set new relation.");
-        
-        assert!(relationships == FactionRelationships::from_parts(
-                core.clone(),
-                relationships.clone().into()
-            ),
-            "`test_faction_family` Failed to build `FactionRelationships` from parts."
-        );
-        
-        let mut second_relationships = FactionRelationships::new(faction);
-        second_relationships.set_relation(
-            core.clone(),
-            AtWar
-        );
-        
-        assert!(!FactionRelationships::are_consistent(
-                &relationships,
-                &second_relationships
-            ), "`test_faction_family` Failed to check for consistent relationships."
-        );
-        
-        assert!(second_relationships.set_relation(
-                core.clone(),
-                Allied
-            ) == Some(AtWar), "`test_faction_family` Failed to set new relationship."
-        );
-        
-        assert!(FactionRelationships::are_consistent(
-                &relationships,
-                &second_relationships
-            ), "`test_faction_family` Failed to evaluate for consistent relationships."
-        );
+        let pair = FactionPair::new(1, 0);
+        unsafe {
+            assert!(pair == Some(FactionPair::from_parts(0, 1)), "`FactionPair::new` failed to swap factions.");
+        }
     }
 }

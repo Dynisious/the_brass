@@ -6,5 +6,3 @@
 //! Date: 2017/09/22
 
 pub mod ships;
-pub mod combat_instance;
-pub mod fleets;

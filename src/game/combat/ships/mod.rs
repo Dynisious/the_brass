@@ -6,10 +6,12 @@
 //! Date: 2017/09/22
 
 use game::*;
-mod ships;
-pub mod weapons;
 
-pub use self::ships::*;
+pub mod ship_error;
+pub mod ship_template;
+pub mod ship;
+
+pub use self::ship::*;
 
 /// A type alias for a `class` of Ship based on its size.
 pub type ShipSize = UInt;
