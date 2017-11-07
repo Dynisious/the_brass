@@ -10,6 +10,7 @@ use super::ship_error::*;
 use super::ship_template::*;
 use std::sync::Arc;
 use std::rc::Rc;
+use std::ops::Deref;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 /// `ShipTemplate` is a representation of a type of Ship.
@@ -166,27 +167,37 @@ impl Ship {
     pub fn is_alive(&self) -> bool {
         self.hull_points != 0
     }
+    /// Simulates damage dealt against this `Ship` and returns any which would not used
+    /// to destroy this `Ship`.
+    ///
+    /// #Params
+    ///
+    /// damage --- The damage leveled against this `Ship`.
+    pub fn simulate_damage(&mut self, mut damage: DamagePoint) -> (HullPoint, ShieldPoint, DamagePoint) {
+        if damage < self.shield_points {
+            (self.hull_points, self.shield_points - damage, 0)
+        } else {
+            damage -= self.shield_points;
+            
+            if damage < self.hull_points {
+                (self.hull_points - damage, 0, 0)
+            } else {
+                (0, 0, damage - self.hull_points)
+            }
+        }
+    }
     /// Resolves damage dealt against this `Ship` and returns any which was not used to
     /// destroy this `Ship`.
     ///
     /// #Params
     ///
     /// damage --- The damage leveled against this `Ship`.
-    pub fn resolve_damage(&mut self, mut damage: DamagePoint) -> DamagePoint {
-        if damage < self.shield_points {
-            self.shield_points -= damage; 0
-        } else {
-            damage -= self.shield_points;
-            self.shield_points = 0;
-            
-            if damage < self.hull_points {
-                self.hull_points -= damage; 0
-            } else {
-                damage -= self.hull_points;
-                self.hull_points = 0;
-                damage
-            }
-        }
+    pub fn resolve_damage(&mut self, damage: DamagePoint) -> DamagePoint {
+        let simulation = self.simulate_damage(damage);
+        
+        self.hull_points = simulation.0;
+        self.shield_points = simulation.1;
+        simulation.2
     }
     /// Regenerates shields for this `Ship`, capping the shields off at the shield
     /// capacity of `self.template`.
@@ -199,8 +210,10 @@ impl Ship {
     }
 }
 
-impl AsRef<ShipTemplate> for Ship {
-    fn as_ref(&self) -> &ShipTemplate {
+impl Deref for Ship {
+    type Target = ShipTemplate;
+    
+    fn deref(&self) -> &Self::Target {
         &self.template
     }
 }
@@ -326,7 +339,7 @@ mod tests {
         assert!(ship.is_alive(), "`Ship::is_alive` failed to register alive.");
         
         ship.regenerate_shields();
-        assert!(ship.get_shield_points() == ship.as_ref().get_shield_capacity(), "`Ship::regenerate_shields` exceeded shield capacity.");
+        assert!(ship.get_shield_points() == ship.get_shield_capacity(), "`Ship::regenerate_shields` exceeded shield capacity.");
         
         assert!(ship.resolve_damage(50) == 0, "First `Ship::resolve_damage` returned incorrect damage.");
         assert!(

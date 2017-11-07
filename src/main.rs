@@ -14,8 +14,8 @@ mod game;
 use self::game::*;
 
 static mut STAY_ALIVE: bool = true;
-static mut ALL_SHIPS: *mut Mutex<Vec<factions::AllignedInstance<combat::ships::Ship>>>
-    = 0 as *mut Mutex<Vec<factions::AllignedInstance<combat::ships::Ship>>>;
+static mut ALL_SHIPS: *mut Mutex<Vec<factions::AllignedInstance<combat::ships::ReducedShip>>>
+    = 0 as *mut Mutex<Vec<factions::AllignedInstance<combat::ships::ReducedShip>>>;
 
 macro_rules! get_all_ships {
     () => {
@@ -49,42 +49,11 @@ fn command_loop() {
                     STAY_ALIVE = false;
                 }
             } else if line.starts_with("spawn_ship ") {
-                let args = line.chars().skip("spawn_ship ".len());
-                let chars = args.clone().skip(1).take_while(|c| *c != "\"".chars().next().unwrap());
-                let mut typename = String::with_capacity(chars.size_hint().0);
-                String::extend(&mut typename, chars);
-                
-                let args = args.skip(typename.len() + 3);
-                let chars = args.clone().take_while(|c| *c != ' ');
-                let mut faction_string = String::with_capacity(chars.size_hint().0);
-                String::extend(&mut faction_string, chars);
-                
-                if let Ok(faction) = faction_string.parse::<factions::Faction>() {
-                    let args = args.skip(faction_string.len() + 1);
-                    let chars = args.clone();
-                    let mut quantity = String::with_capacity(chars.size_hint().0);
-                    String::extend(&mut quantity, chars);
-                    let quantity = if let Ok(quantity) = quantity.parse::<UInt>() {
-                        quantity
-                    } else {
-                        1
-                    };
-                    
-                    if let Some(ship) = combat::ships::spawn_ship(&typename, faction) {
-                        let mut all_ships = get_all_ships!().lock().unwrap();
-                        for _ in 0..quantity {
-                            all_ships.push(ship.clone());
-                        }
-                    } else {
-                        println!("`spawn_ship` must have a valid type name as its first argument.\n");
-                    }
-                } else {
-                    println!("`spawn_ship` expects a positive number as it's second argument, got \"{}\".\n", faction_string);
-                }
+                spawn_ship(line)
             } else if line.split(' ').next().unwrap().to_lowercase() == "kill_ships" {
                 get_all_ships!().lock().unwrap().clear();
             } else {
-                println!("Do not recognise command: \"{}\".", line);
+                print_help(line);
             }
         }
         
@@ -93,6 +62,46 @@ fn command_loop() {
                 break;
             }
         }
+    }
+}
+
+fn print_help(line: String) {
+    println!("Do not recognise command: \"{}\". Try:", line);
+    println!("   spawn_ship `typename` `faction` `quantity` --- Attempts to spawn Ships using the passed parameters.");
+    println!("                                   kill_ships --- Despawns all Ships.");
+    println!("                                         kill --- Terminates the program.");
+}
+
+fn spawn_ship(line: String) {
+    let args = line.chars().skip("spawn_ship ".len());
+    let chars = args.clone().skip(1).take_while(|c| *c != "\"".chars().next().unwrap());
+    let mut typename = String::with_capacity(chars.size_hint().0);
+    String::extend(&mut typename, chars);
+    
+    let args = args.skip(typename.len() + 3);
+    let chars = args.clone().take_while(|c| *c != ' ');
+    let mut faction_string = String::with_capacity(chars.size_hint().0);
+    String::extend(&mut faction_string, chars);
+    
+    if let Ok(faction) = faction_string.parse::<factions::Faction>() {
+        let args = args.skip(faction_string.len() + 1);
+        let chars = args.clone();
+        let mut quantity = String::with_capacity(chars.size_hint().0);
+        String::extend(&mut quantity, chars);
+        let quantity = if let Ok(quantity) = quantity.parse::<UInt>() {
+            quantity
+        } else {
+            1
+        };
+        
+        if let Some(factions::AllignedInstance(faction, ship)) = combat::ships::spawn_ship(&typename, faction) {
+            let mut all_ships = get_all_ships!().lock().unwrap();
+            all_ships.push(factions::AllignedInstance(faction, combat::ships::ReducedShip::new(ship, quantity)));
+        } else {
+            println!("`spawn_ship` must have a valid type name as its first argument.\n");
+        }
+    } else {
+        println!("`spawn_ship` expects a positive number as it's second argument, got \"{}\".\n", faction_string);
     }
 }
 
@@ -106,12 +115,15 @@ fn game_loop() {
         
         all_ships.iter()
         .enumerate()
-        .map(|(index, pair)| (index, pair.0, pair.1.as_ref().attack_damage))
+        .map(|(index, pair)| (index, pair.0, pair.1.as_ref().attack_damage * pair.1.number))
         .collect::<Vec<(usize, factions::Faction, UInt)>>().iter()
         .for_each(|&(atkr_index, faction, damage)| {
             if let Some((dfnd_index, defender)) = all_ships.iter_mut()
                 .enumerate()
-                .filter(|&(_, ref defender)| defender.0 != faction).next() {
+                .filter(|&(_, ref defender)| factions::FactionPair::new(defender.0, faction).map_or(false,
+                    |pair| *factions::get_game_factions().1.entry(pair)
+                        .or_insert(factions::Enemy) == factions::Enemy
+                )).next() {
                 println!("    Ship{} attacked Ship{}", atkr_index, dfnd_index);
                 defender.1.resolve_damage(damage);
             }
@@ -134,7 +146,7 @@ fn game_loop() {
                 }
                 index += 1;
                 if index >= all_ships.len() && fight_won && all_ships.len() != last_length {
-                    println!("    Fight won by {} with {} left...", all_ships[0].0, all_ships.len());
+                    println!("    Fight won by {} with {} left...", all_ships[0].0, all_ships.iter().fold(0, |sum, ship| sum + ship.1.number));
                 }
             }
             num += 1;

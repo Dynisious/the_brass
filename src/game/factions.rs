@@ -9,6 +9,7 @@ use game::*;
 use std::collections::HashMap;
 use std::sync::{Once, ONCE_INIT};
 use std::hash::{Hash, Hasher};
+use std::ops::Deref;
 
 pub type Faction = UInt;
 
@@ -77,8 +78,10 @@ impl Hash for FactionPair {
 /// An item which is alligned with a particular faction.
 pub struct AllignedInstance<T: Sized>(pub Faction, pub T);
 
-impl<T: Sized> AsRef<T> for AllignedInstance<T> {
-    fn as_ref(&self) -> &T {
+impl<T: Sized> Deref for AllignedInstance<T> {
+    type Target = T;
+    
+    fn deref(&self) -> &T {
         &self.1
     }
 }
@@ -86,27 +89,28 @@ impl<T: Sized> AsRef<T> for AllignedInstance<T> {
 static mut GAME_FACTIONS: *mut (Vec<String>, HashMap<FactionPair, Relation>) = 0 as *mut (Vec<String>, HashMap<FactionPair, Relation>);
 static INIT_GAME_FACTIONS: Once = ONCE_INIT;
 
-#[cfg(features="hardcoded")]
+#[cfg(feature="hardcoded")]
 pub unsafe fn init_game_factions() {
     INIT_GAME_FACTIONS.call_once(
         || {
             let mut factions = (Vec::with_capacity(2), HashMap::with_capacity(2));
             macro_rules! hardcode_faction {
-                ($name:tt, $relation:ptrn) => {{
+                ($name:expr, $pair:expr, $relation:expr) => {{
                     factions.0.push($name);
-                    factions.1.insert($name, $relation);
+                    factions.1.insert($pair, $relation);
                 }}
             }
             
             hardcode_faction!(
-                "Empire",
-                (FactionPair::new(0, 1), Enemy)
+                String::from("Empire"),
+                FactionPair::from_parts(0, 1),
+                Enemy
             );
             GAME_FACTIONS = Box::into_raw(Box::new(factions))
         }
     )
 }
-#[cfg(not(features="hardcoded"))]
+#[cfg(not(feature="hardcoded"))]
 pub unsafe fn init_game_factions() {
     INIT_GAME_FACTIONS.call_once(
         || GAME_FACTIONS = Box::into_raw(Box::new((Vec::new(), HashMap::new())))
