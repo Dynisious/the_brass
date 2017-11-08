@@ -89,28 +89,6 @@ impl<T: Sized> Deref for AllignedInstance<T> {
 static mut GAME_FACTIONS: *mut (Vec<String>, HashMap<FactionPair, Relation>) = 0 as *mut (Vec<String>, HashMap<FactionPair, Relation>);
 static INIT_GAME_FACTIONS: Once = ONCE_INIT;
 
-#[cfg(feature="hardcoded")]
-pub unsafe fn init_game_factions() {
-    INIT_GAME_FACTIONS.call_once(
-        || {
-            let mut factions = (Vec::with_capacity(2), HashMap::with_capacity(2));
-            macro_rules! hardcode_faction {
-                ($name:expr, $pair:expr, $relation:expr) => {{
-                    factions.0.push($name);
-                    factions.1.insert($pair, $relation);
-                }}
-            }
-            
-            hardcode_faction!(
-                String::from("Empire"),
-                FactionPair::from_parts(0, 1),
-                Enemy
-            );
-            GAME_FACTIONS = Box::into_raw(Box::new(factions))
-        }
-    )
-}
-#[cfg(not(feature="hardcoded"))]
 pub unsafe fn init_game_factions() {
     INIT_GAME_FACTIONS.call_once(
         || GAME_FACTIONS = Box::into_raw(Box::new((Vec::new(), HashMap::new())))

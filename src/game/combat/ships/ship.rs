@@ -3,7 +3,7 @@
 //! #Last Modified
 //!
 //! Author: Daniel Bechaz</br>
-//! Date: 2017/11/06
+//! Date: 2017/11/09
 
 use game::*;
 use super::ship_error::*;
@@ -238,7 +238,7 @@ impl From<Rc<ShipTemplate>> for Ship {
 ///
 /// typename --- The type name of the ship type.
 /// faction --- The faction of the Ship.
-pub fn spawn_ship(typename: &String, faction: factions::Faction) -> Option<factions::AllignedInstance<Ship>> {
+pub fn build_game_ship(typename: &String, faction: factions::Faction) -> Option<factions::AllignedInstance<Ship>> {
     unsafe {
         get_game_templates().get(typename)
         .map(|template| factions::AllignedInstance(

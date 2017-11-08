@@ -3,7 +3,12 @@
 //! #Last Modified
 //!
 //! Author: Daniel Bechaz</br>
-//! Date: 2017/11/06
+//! Date: 2017/11/09
+
+extern crate toml;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 
 use std::thread;
 use std::io;
@@ -94,7 +99,7 @@ fn spawn_ship(line: String) {
             1
         };
         
-        if let Some(factions::AllignedInstance(faction, ship)) = combat::ships::spawn_ship(&typename, faction) {
+        if let Some(factions::AllignedInstance(faction, ship)) = combat::ships::build_game_ship(&typename, faction) {
             let mut all_ships = get_all_ships!().lock().unwrap();
             all_ships.push(factions::AllignedInstance(faction, combat::ships::ReducedShip::new(ship, quantity)));
         } else {

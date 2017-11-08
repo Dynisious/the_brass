@@ -75,8 +75,8 @@ impl ReducedShip {
         total_shield += self.average_ship.get_shield_points() as u64 * unattacked as u64;
         
         if self.is_alive() {
-            self.average_ship.set_hull_points((total_hull / self.number as u64) as HullPoint);
-            self.average_ship.set_shield_points((total_shield / self.number as u64) as ShieldPoint);
+            self.average_ship.set_hull_points((total_hull / self.number as u64) as HullPoint).ok();
+            self.average_ship.set_shield_points((total_shield / self.number as u64) as ShieldPoint).ok();
         }
         damage
     }

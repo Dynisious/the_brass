@@ -1,0 +1,10 @@
+
+ship_size_class = 1
+fuel_capacity = 10
+fuel_use = 2
+max_hull = 200
+shield_capacity = 100
+shield_recovery = 2
+cargo_capacity = 0
+smallest_target = 1
+attack_damage = 10

@@ -7,3 +7,6 @@ authors = ["Dynisious <daniel.bechaz@gmail.com>"]
 hardcoded = []
 
 [dependencies]
+serde = "*"
+serde_derive = "*"
+toml = "0.4.5"

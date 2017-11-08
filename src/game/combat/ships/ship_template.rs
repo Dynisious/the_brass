@@ -3,20 +3,21 @@
 //! #Last Modified
 //!
 //! Author: Daniel Bechaz</br>
-//! Date: 2017/11/06
+//! Date: 2017/11/09
 
 use game::*;
 use super::{ShipSize, Mass};
 use super::ship_error::*;
-use std::sync::{Arc, Once, ONCE_INIT};
-use std::collections::HashMap;
+use std::sync::{Arc, Once, ONCE_INIT, Mutex, MutexGuard};
+use std::io::{self, Read};
+use std::path::Path;
 
 pub type FuelUnit = UInt;
 pub type HullPoint = UInt;
 pub type ShieldPoint = UInt;
 pub type DamagePoint = UInt;
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Deserialize)]
 /// `ShipTemplate` is a representation of a type of Ship.
 pub struct ShipTemplate {
     /// The size class of this Ship type.
@@ -197,7 +198,7 @@ impl ShipTemplate {
 
 #[derive(Debug, Eq, Clone)]
 /// A `ShipTemplate` with a name.
-pub struct NamedTemplate(String, ShipTemplate);
+pub struct NamedTemplate(String, Arc<ShipTemplate>);
 
 impl PartialEq for NamedTemplate {
     fn eq(&self, other: &Self) -> bool {
@@ -211,52 +212,97 @@ impl AsRef<ShipTemplate> for NamedTemplate {
     }
 }
 
-static mut GAME_TEMPLATES: *mut HashMap<String, Arc<ShipTemplate>> = 0 as *mut HashMap<String, Arc<ShipTemplate>>;
-static INIT_GAME_TEMPLATES: Once = ONCE_INIT;
+pub struct TemplateBuf {
+    templates: Vec<NamedTemplate>,
+    max_loaded: usize
+}
 
-#[cfg(feature="hardcoded")]
-pub unsafe fn init_game_templates() {
-    INIT_GAME_TEMPLATES.call_once(
-        || {
-            let mut templates = HashMap::with_capacity(2);
-            macro_rules! hardcode_template {
-                ($name:tt, $ship_size_class:expr, $fuel_capacity:expr, $fuel_use:expr,
-                $hull_points:expr, $shield_points:expr, $shield_recovery:expr,
-                $cargo_capacity:expr, $smallest_target:expr, $attack_damage:expr,
-                $error:tt) => {
-                    templates.insert(
-                        String::from($name),
-                        Arc::new(
-                            ShipTemplate::new(
-                                $ship_size_class,
-                                $fuel_capacity,
-                                $fuel_use,
-                                $hull_points,
-                                $shield_points,
-                                $shield_recovery,
-                                $cargo_capacity,
-                                $smallest_target,
-                                $attack_damage
-                            ).expect($error)
-                        )
-                    )
-                }
-            }
-            
-            hardcode_template!("Light Fighter", 1, 10, 1, 100, 100, 1, 0, 1, 10, "Failed to create \"Light Fighter\".");
-            GAME_TEMPLATES = Box::into_raw(Box::new(templates))
+impl TemplateBuf {
+    pub unsafe fn from_parts(templates: Vec<NamedTemplate>, max_loaded: usize) -> Self {
+        Self {
+            templates,
+            max_loaded
         }
+    }
+    pub fn new(max_loaded: usize) -> Self {
+        unsafe {
+            Self::from_parts(Vec::with_capacity(max_loaded), max_loaded)
+        }
+    }
+    pub fn loaded(&self) -> usize {
+        self.templates.len()
+    }
+    pub fn max_loaded(&self) -> usize {
+        self.max_loaded
+    }
+    pub fn set_max_loaded(&mut self, max_loaded: usize) {
+        self.templates.truncate(max_loaded);
+        self.max_loaded = max_loaded
+    }
+    pub fn get(&mut self, name: &String) -> Option<Arc<ShipTemplate>> {
+        const SHIPS_PATH: &str = "./res/ships/";
+        
+        self.templates.iter()
+        .find(|template| &template.0 == name)
+        .map(|template| template.1.clone()
+        ).or_else(|| {
+            let mut path_string = String::from(SHIPS_PATH);
+            path_string.push_str(name);
+            path_string.push_str(".ship");
+            
+            match load_template(path_string.as_ref()) {
+                Ok(template) => {
+                    eprintln!("    \"{}\" Successfully loaded.", name);
+                    let template = Arc::new(template);
+                    
+                    if self.max_loaded == self.loaded() {
+                        eprintln!("    \"{}\" Successfully unloaded.", self.templates[0].0);
+                        self.templates[0] = NamedTemplate(name.clone(), template.clone());
+                    } else {
+                        self.templates.push(NamedTemplate(name.clone(), template.clone()));
+                    }
+                    Some(template)
+                },
+                Err(e) => { eprintln!("    Failed to load: {:?}", e); None }
+            }
+        })
+    }
+    pub fn unload(&mut self, name: &String) {
+        let mut index = 0;
+        while index < self.loaded() {
+            if &self.templates[index].0 == name {
+                self.templates.swap_remove(index);
+                break;
+            } else {
+                index += 1;
+            }
+        }
+    }
+}
+
+fn load_template(file_path: &Path) -> Result<ShipTemplate, Result<io::Error, ::toml::de::Error>> {
+    ::std::fs::File::open(file_path)
+    .and_then(|mut file| {
+        let mut content = String::new();
+        
+        file.read_to_string(&mut content)
+        .map(|_| content)
+    }).map_err(|e| Ok(e)
+    ).and_then(|content| ::toml::from_str(content.as_str()
+        ).map_err(|e| Err(e))
     )
 }
-#[cfg(not(feature="hardcoded"))]
+
+static mut GAME_TEMPLATES: *mut Mutex<TemplateBuf> = 0 as *mut Mutex<TemplateBuf>;
+static INIT_GAME_TEMPLATES: Once = ONCE_INIT;
 pub unsafe fn init_game_templates() {
-    INIT_GAME_TEMPLATES.call_once(
-        || GAME_TEMPLATES = Box::into_raw(Box::new(HashMap::new()))
-    )
+    INIT_GAME_TEMPLATES.call_once(|| {
+        GAME_TEMPLATES = Box::into_raw(Box::new(Mutex::new(TemplateBuf::new(10))));
+    })
 }
-pub fn get_game_templates() -> &'static mut HashMap<String, Arc<ShipTemplate>> {
+pub fn get_game_templates() -> MutexGuard<'static, TemplateBuf> {
     unsafe {
-        &mut *GAME_TEMPLATES
+        (*GAME_TEMPLATES).lock().expect("Ship Templates Mutex Poisoned!!!")
     }
 }
 
