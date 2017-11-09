@@ -8,7 +8,6 @@
 use game::*;
 use super::ship_error::*;
 use super::ship_template::*;
-use std::sync::Arc;
 use std::rc::Rc;
 use std::ops::Deref;
 
@@ -239,17 +238,11 @@ impl From<Rc<ShipTemplate>> for Ship {
 /// typename --- The type name of the ship type.
 /// faction --- The faction of the Ship.
 pub fn build_game_ship(typename: &String, faction: factions::Faction) -> Option<factions::AllignedInstance<Ship>> {
-    unsafe {
-        get_game_templates().get(typename)
-        .map(|template| factions::AllignedInstance(
-            faction,
-            Ship::from(
-                Rc::from_raw(
-                    Arc::into_raw(template.clone())
-                )
-            )
-        ))
-    }
+    get_game_templates().get(typename)
+    .map(|template| factions::AllignedInstance(
+        faction,
+        Ship::from(template.clone())
+    ))
 }
 
 #[cfg(test)]

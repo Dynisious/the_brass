@@ -72,9 +72,9 @@ fn command_loop() {
 
 fn print_help(line: String) {
     println!("Do not recognise command: \"{}\". Try:", line);
-    println!("   spawn_ship `typename` `faction` `quantity` --- Attempts to spawn Ships using the passed parameters.");
-    println!("                                   kill_ships --- Despawns all Ships.");
-    println!("                                         kill --- Terminates the program.");
+    println!("    spawn_ship `typename` `faction` `quantity` --- Attempts to spawn Ships using the passed parameters.");
+    println!("                                    kill_ships --- Despawns all Ships.");
+    println!("                                          kill --- Terminates the program.");
 }
 
 fn spawn_ship(line: String) {

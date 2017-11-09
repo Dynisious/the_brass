@@ -7,6 +7,7 @@
 
 pub mod ship_error;
 pub mod ship_template;
+pub mod weapon;
 pub mod ship;
 pub mod reduced_ship;
 

@@ -8,9 +8,11 @@
 use game::*;
 use super::{ShipSize, Mass};
 use super::ship_error::*;
-use std::sync::{Arc, Once, ONCE_INIT, Mutex, MutexGuard};
+use std::collections::LinkedList;
+use std::sync::*;
 use std::io::{self, Read};
 use std::path::Path;
+use std::rc::Rc;
 
 pub type FuelUnit = UInt;
 pub type HullPoint = UInt;
@@ -198,7 +200,7 @@ impl ShipTemplate {
 
 #[derive(Debug, Eq, Clone)]
 /// A `ShipTemplate` with a name.
-pub struct NamedTemplate(String, Arc<ShipTemplate>);
+pub struct NamedTemplate(String, Rc<ShipTemplate>);
 
 impl PartialEq for NamedTemplate {
     fn eq(&self, other: &Self) -> bool {
@@ -212,92 +214,182 @@ impl AsRef<ShipTemplate> for NamedTemplate {
     }
 }
 
-pub struct TemplateBuf {
-    templates: Vec<NamedTemplate>,
-    max_loaded: usize
+impl Drop for NamedTemplate {
+    fn drop(&mut self) {
+        //There should only be 1 strong reference from this named instance if this
+        //template is being unloaded.
+        if Rc::strong_count(&self.1) == 1 {
+            eprintln!("\"{}\" has been unloaded.", self.0);
+        } else {
+            eprintln!("\"{}\" unloaded with live references!!!", self.0);
+        }
+    }
 }
 
+/// A `TemplateBuf` is a buffer of loaded `NamedTemplate`s.
+/// The `TemplateBuf` is guarenteed to have space for at least `expected_load` templates
+/// but will go over the expected load if needed.
+pub struct TemplateBuf {
+    /// The `NamedTemplate`s loaded on the heap.
+    templates: LinkedList<Box<NamedTemplate>>,
+    /// The minimum number of templates which can be loaded.
+    pub expected_load: usize
+}
+
+static SHIPS_DIR: &str = "./res/ships/";
+
 impl TemplateBuf {
-    pub unsafe fn from_parts(templates: Vec<NamedTemplate>, max_loaded: usize) -> Self {
+    /// Builds a `TemplateBuf` from raw parts.
+    ///
+    /// #Params
+    ///
+    /// templates --- The collection of templates in this TemplateBuf.
+    /// expected_load --- The minimum number of templates to keep loaded.
+    pub fn new(templates: LinkedList<Box<NamedTemplate>>, expected_load: usize) -> Self {
         Self {
             templates,
-            max_loaded
+            expected_load
         }
     }
-    pub fn new(max_loaded: usize) -> Self {
-        unsafe {
-            Self::from_parts(Vec::with_capacity(max_loaded), max_loaded)
-        }
+    /// Creates an empty `TemplateBuf` with the passed `expected_load`.
+    ///
+    /// #Params
+    ///
+    /// expected_load --- The minimum number of templates to keep loaded.
+    pub fn with_capacity(expected_load: usize) -> Self {
+        Self::new(LinkedList::new(), expected_load)
     }
+    /// Returns the number of loaded `ShipTemplate`s in this `TemplateBuf`.
     pub fn loaded(&self) -> usize {
         self.templates.len()
     }
-    pub fn max_loaded(&self) -> usize {
-        self.max_loaded
-    }
-    pub fn set_max_loaded(&mut self, max_loaded: usize) {
-        self.templates.truncate(max_loaded);
-        self.max_loaded = max_loaded
-    }
-    pub fn get(&mut self, name: &String) -> Option<Arc<ShipTemplate>> {
-        const SHIPS_PATH: &str = "./res/ships/";
+    /// Unloads all templates which are over `expected_load` and have no live references.
+    pub fn unload_overflow(&mut self) {
+        //The number of templates over the `expected_load`.
+        let mut to_unload = self.loaded() - self.expected_load;
+        //The maximum number of iterations which can to be done.
+        let mut iterated = self.loaded();
         
-        self.templates.iter()
-        .find(|template| &template.0 == name)
-        .map(|template| template.1.clone()
-        ).or_else(|| {
-            let mut path_string = String::from(SHIPS_PATH);
-            path_string.push_str(name);
-            path_string.push_str(".ship");
+        //Iterate while theres more to unloaded and there are more iterations to do.
+        while to_unload > 0 && iterated > 0 {
+            //Get the next template from the list.
+            let template = self.templates.pop_front().unwrap();
             
-            match load_template(path_string.as_ref()) {
+            //If this template should be unloaded there will only be one strong reference to it...
+            if Rc::strong_count(&template.1) > 1 {
+                //If there are more than one strong reference it should be kept...
+                self.templates.push_back(template);
+            } else {
+                //Otherwise it should be unloaded...
+                to_unload -= 1;
+            }
+            
+            iterated -= 1;
+        }
+    }
+    /// Attempts to unload the `ShipTemplate` identified with this name.
+    /// Returns true if the template was unloaded.
+    /// A template will not be unloaded if there are live references to it still.
+    //
+    /// #Params
+    ///
+    /// name --- The name of the `NamedTemplate` to be unloaded.
+    pub fn unload(&mut self, name: &String) -> bool {
+        //Stop iteration once all the templates have been iterated.
+        for _ in 0..self.loaded() {
+            //Gets the next template.
+            let template = self.templates.pop_front().unwrap();
+            
+            //Check if it is the correct template...
+            if &template.0 == name {
+                //Check that there are no live references to this template...
+                if Rc::strong_count(&template.1) > 1 {
+                    //Retain it if there are live references and return.
+                    self.templates.push_back(template);
+                    return false;
+                //If there are no live references drop it and return.
+                } else {
+                    return true;
+                }
+            //If its not the correct template, retain it.
+            } else {
+                self.templates.push_back(template);
+            }
+        }
+        
+        return false;
+    }
+    /// Attempts to get the `ShipTemplate` of the given name.
+    /// If the template is not in the buffer it will attempt to be loaded.
+    ///
+    /// #Params
+    ///
+    /// name --- The name of the `ShipTemplate` to get.
+    pub fn get(&mut self, name: &String) -> Option<Rc<ShipTemplate>> {
+        //Search the loaded templates for the correct template.
+        let res = self.templates.iter()
+        .find(|template| &template.0 == name)
+        .map(|template| template.1.clone());
+        
+        //If the template was not found, attempt to load and return it.
+        res.or_else(|| {
+            //Build a path to the `.ship` file.
+            let mut file_path = String::from(SHIPS_DIR);
+            file_path.push_str(name);
+            file_path.push_str(".ship");
+            
+            //Attempt to load the template.
+            match load_template(file_path.as_ref()) {
+                //If the template was loaded successfully.
                 Ok(template) => {
-                    eprintln!("    \"{}\" Successfully loaded.", name);
-                    let template = Arc::new(template);
-                    
-                    if self.max_loaded == self.loaded() {
-                        eprintln!("    \"{}\" Successfully unloaded.", self.templates[0].0);
-                        self.templates[0] = NamedTemplate(name.clone(), template.clone());
-                    } else {
-                        self.templates.push(NamedTemplate(name.clone(), template.clone()));
-                    }
-                    Some(template)
+                    //Store it on the heap and keep a reference in the buffer.
+                    self.templates.push_front(
+                        Box::new(NamedTemplate(name.clone(), Rc::new(template)))
+                    );
+                    eprintln!("\"{}\" has been loaded.", name);
+                    //Return the new template.
+                    Some(self.templates.front().unwrap().1.clone())
                 },
-                Err(e) => { eprintln!("    Failed to load: {:?}", e); None }
+                //There was an error while loading the template.
+                Err(e) => { eprintln!("\"{}\" could not be loaded:\n    {:?}", name, e); None }
             }
         })
     }
-    pub fn unload(&mut self, name: &String) {
-        let mut index = 0;
-        while index < self.loaded() {
-            if &self.templates[index].0 == name {
-                self.templates.swap_remove(index);
-                break;
-            } else {
-                index += 1;
-            }
-        }
-    }
 }
 
+/// Attempt to load a `ShipTemplate` from a `.ship` file.
+///
+/// #Params
+///
+/// file_path --- The path to the `.ship` file to load. 
 fn load_template(file_path: &Path) -> Result<ShipTemplate, Result<io::Error, ::toml::de::Error>> {
+    eprintln!("Loading {:?}...", file_path);
+    //Open the file...
     ::std::fs::File::open(file_path)
     .and_then(|mut file| {
+        //Create a buffer for the content.
         let mut content = String::new();
         
+        //Read in the content and return it.
         file.read_to_string(&mut content)
         .map(|_| content)
+    //Map error values to the result type.
     }).map_err(|e| Ok(e)
+    //If the reading succeeded, attempt to enterperate the `.ship` file...
     ).and_then(|content| ::toml::from_str(content.as_str()
+        //Map error values to the result type.
         ).map_err(|e| Err(e))
     )
 }
+
 
 static mut GAME_TEMPLATES: *mut Mutex<TemplateBuf> = 0 as *mut Mutex<TemplateBuf>;
 static INIT_GAME_TEMPLATES: Once = ONCE_INIT;
 pub unsafe fn init_game_templates() {
     INIT_GAME_TEMPLATES.call_once(|| {
-        GAME_TEMPLATES = Box::into_raw(Box::new(Mutex::new(TemplateBuf::new(10))));
+        const DEFAULT_LOAD: usize = 10;
+        
+        GAME_TEMPLATES = Box::into_raw(Box::new(Mutex::new(TemplateBuf::with_capacity(DEFAULT_LOAD))));
     })
 }
 pub fn get_game_templates() -> MutexGuard<'static, TemplateBuf> {
