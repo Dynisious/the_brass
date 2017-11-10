@@ -3,14 +3,19 @@
 //! #Last Modified
 //!
 //! Author: Daniel Bechaz</br>
-//! Date: 2017/09/22
+//! Date: 2017/11/10
+
+use game::*;
 
 pub mod ship_error;
+pub mod attacks;
 pub mod ship_template;
-pub mod weapon;
 pub mod ship;
 pub mod reduced_ship;
 
+pub use self::ship_error::*;
+pub use self::attacks::*;
+pub use self::ship_template::*;
 pub use self::ship::*;
 pub use self::reduced_ship::*;
 

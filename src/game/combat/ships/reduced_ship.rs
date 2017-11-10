@@ -4,11 +4,12 @@
 //! #Last Modified
 //!
 //! Author: Daniel Bechaz</br>
-//! Date: 2017/11/07
+//! Date: 2017/11/10
 
-pub use game::*;
-pub use super::ship_template::{DamagePoint, HullPoint, ShieldPoint};
-pub use super::ship::*;
+use game::*;
+use super::ship_template::{HullPoint, ShieldPoint};
+use super::attacks::*;
+use super::ship::*;
 
 /// A `ReducedShip` represents multiple instances of a `ShipTemplate` simulated using a
 /// shared average state.
@@ -38,6 +39,10 @@ impl ReducedShip {
     pub fn is_alive(&self) -> bool {
         self.number != 0
     }
+    /// Regenerates shields for this `ReducedShip`.
+    pub fn regenerate_shields(&mut self) {
+        self.average_ship.regenerate_shields()
+    }
     /// Resolves damage dealt against this group of `Ship`s and returns any which was not
     /// used to destroy the `Ship`s.
     ///
@@ -45,44 +50,103 @@ impl ReducedShip {
     ///
     /// damage --- The damage leveled against this `ReducedShip`.
     pub fn resolve_damage(&mut self, mut damage: DamagePoint) -> DamagePoint {
-        let mut total_hull = 0u64;
-        let mut total_shield = 0u64;
+        //The total amount of remaining hull points of all the ships.
+        let mut remaining_hull = 0u64;
+        //The total amount of remaining shield points of all the ships.
+        let mut remaining_shield = 0u64;
         
-        let mut iterated = self.number;
+        //The number of ships left to iterate. if to_iterate was ever greater than damage
+        //then `portion` would just be 0 hence the `min` call.
+        let mut to_iterate = ::std::cmp::min(self.number, damage);
+        //The number of ships which have not been attacked.
         let mut unattacked = self.number;
-        while iterated > 0 && damage != 0 {
-            let portion = damage / iterated;
+        //Iterate while there's still ships to iterate and while there's still damage to
+        //resolve.
+        while to_iterate > 0 && damage != 0 {
+            //The portion of damage which will get used against the current ship.
+            let portion = damage / to_iterate;
+            //Remove the portion from the pool of damage.
             damage -= portion;
             
-            if portion != 0 {
-                let simulation = self.average_ship.simulate_damage(portion);
-                
-                if simulation.0 == 0 {
-                    self.number -= 1;
-                } else {
-                    total_hull += simulation.0 as u64;
-                }
-                
-                total_shield += simulation.1 as u64;
+            //Simulate the portion being used against this ship.
+            let simulation = self.average_ship.simulate_damage(portion);
+            
+            //Check whether the ship died (its hull is 0).
+            if simulation.0 == 0 {
+                //If the ship died remove a ship from this `ReducedShip`.
+                self.number -= 1;
+                //If the ship died there's maybe some damage left unused which will be
+                //returned to the pool.
                 damage += simulation.2;
-                unattacked -= 1;
+            //If the ship did not die, there's hull and maybe shield remaining.
+            } else {
+                //Add the remaining hull to the pool.
+                remaining_hull += simulation.0 as u64;
+                //Add the remaining shield to the pool.
+                remaining_shield += simulation.1 as u64;
             }
             
-            iterated -= 1;
+            //Decrement the number of unattacked ships.
+            unattacked -= 1;            
+            //Decrement the number of ships left to iterate, ensuring that it is at most
+            //`damage` so that portion is non zero.
+            to_iterate = ::std::cmp::min(to_iterate - 1, damage);
         }
         
-        total_hull += self.average_ship.get_hull_points() as u64 * unattacked as u64;
-        total_shield += self.average_ship.get_shield_points() as u64 * unattacked as u64;
-        
+        //Check whether there's any ships left alive.
         if self.is_alive() {
-            self.average_ship.set_hull_points((total_hull / self.number as u64) as HullPoint).ok();
-            self.average_ship.set_shield_points((total_shield / self.number as u64) as ShieldPoint).ok();
+            //Add to the remaining hull the hull of all ships which were not attacked.
+            remaining_hull += self.average_ship.get_hull_points() as u64 * unattacked as u64;
+            //Add to the remaining shields the shields of all ships which were not attacked.
+            remaining_shield += self.average_ship.get_shield_points() as u64 * unattacked as u64;
+            
+            //Calculate the new average hull.
+            self.average_ship.set_hull_points((remaining_hull / self.number as u64) as HullPoint).ok();
+            //Calculate the new average shields.
+            self.average_ship.set_shield_points((remaining_shield / self.number as u64) as ShieldPoint).ok();
         }
+        //Return the unused damage.
         damage
     }
-    /// Regenerates shields for this `ReducedShip`.
-    pub fn regenerate_shields(&mut self) {
-        self.average_ship.regenerate_shields()
+    /// Resolves attacks leveled against this group of `Ship`s and returns any which were
+    /// not used to destroy the `Ship`s.
+    /// This function does not clear away used attacks in `attacks`
+    ///
+    /// #Params
+    ///
+    /// attacks --- The attacks leveled against this `ReducedShip`.
+    pub fn resolve_attacks(&mut self, attacks: &mut ReducedAttacks) {
+        //The size class of this `ReducedShip`.
+        let size_class = (*self.as_ref()).ship_size_class;
+        //The iterator over each group of targeted attacks, filtered by those which can
+        //target the ships in this `ReducedShip`.
+        let mut iter = attacks.iter_mut()
+        .filter(|attack| attack.valid_target(size_class));
+        
+        //Loop while there are still ships left.
+        //The loop will also exit if there's no attacks left.
+        while self.is_alive() {
+            match iter.next() {
+                //If there's still attacks left then resolve their damage against this
+                //`ReducedShip`.
+                Some(attack) => {
+                    //If there is still unused damage then `parralel_attacks` is set
+                    //accordingly, else it's zeroed.
+                    attack.attack.parralel_attacks =
+                        self.resolve_damage(attack.attack.sum_damage())
+                        / attack.attack.damage_per_attack;
+                },
+                //If there's no more attacks left then their all resolved.
+                None => break
+            }
+        }
+    }
+    /// Calculates the attacks produced by all of the ships in this `ReducedShip` in
+    /// parralel.
+    pub fn get_attacks(&self) -> ReducedAttacks {
+        let mut attacks = self.average_ship.attacks.clone();
+        attacks.iter_mut().for_each(|attack| attack.attack.parralel_attacks *= self.number);
+        attacks
     }
 }
 
@@ -90,11 +154,4 @@ impl AsRef<Ship> for ReducedShip {
     fn as_ref(&self) -> &Ship {
         &self.average_ship
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    
 }

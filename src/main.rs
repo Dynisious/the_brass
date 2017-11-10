@@ -111,60 +111,6 @@ fn spawn_ship(line: String) {
 }
 
 fn game_loop() {
-    let mut last_length = 0;
-    loop {
-        let mut all_ships = get_all_ships!().lock().expect("Failed to get Ships...");
-        
-        all_ships.iter_mut()
-        .for_each(|ref mut ship| ship.1.regenerate_shields());
-        
-        all_ships.iter()
-        .enumerate()
-        .map(|(index, pair)| (index, pair.0, pair.1.as_ref().attack_damage * pair.1.number))
-        .collect::<Vec<(usize, factions::Faction, UInt)>>().iter()
-        .for_each(|&(atkr_index, faction, damage)| {
-            if let Some((dfnd_index, defender)) = all_ships.iter_mut()
-                .enumerate()
-                .filter(|&(_, ref defender)| factions::FactionPair::new(defender.0, faction).map_or(false,
-                    |pair| *factions::get_game_factions().1.entry(pair)
-                        .or_insert(factions::Enemy) == factions::Enemy
-                )).next() {
-                println!("    Ship{} attacked Ship{}", atkr_index, dfnd_index);
-                defender.1.resolve_damage(damage);
-            }
-        });
-        
-        let mut fight_won = all_ships.len() != 0;
-        let mut index = 0;
-        let mut num = 0;
-        while index < all_ships.len() {
-            if !all_ships[index].1.is_alive() {
-                println!("    Ship{} died!!!", num);
-                all_ships.swap_remove(index);
-                if all_ships.len() == 0 {
-                    println!("    All Ships dead!!!");
-                    fight_won = false;
-                }
-            } else {
-                if all_ships[index].0 != all_ships[0].0 {
-                    fight_won = false;
-                }
-                index += 1;
-                if index >= all_ships.len() && fight_won && all_ships.len() != last_length {
-                    println!("    Fight won by {} with {} left...", all_ships[0].0, all_ships.iter().fold(0, |sum, ship| sum + ship.1.number));
-                }
-            }
-            num += 1;
-        }
-        
-        last_length = all_ships.len();
-        
-        unsafe {
-            if !STAY_ALIVE {
-                break;
-            }
-        }
-    }
 }
 
 #[cfg(test)]
